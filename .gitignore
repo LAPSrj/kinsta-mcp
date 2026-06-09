@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Local MCP client config — contains the live API key. Use .mcp.json.example as the template.
+.mcp.json
+
+# Machine-local Claude Code settings
+.claude/settings.local.json

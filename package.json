@@ -1,0 +1,27 @@
+{
+  "name": "kinsta-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "kinsta-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "bun dist/index.js",
+    "dev": "bun src/index.ts",
+    "test": "bun test"
+  },
+  "keywords": ["kinsta", "wordpress", "hosting", "mcp", "model-context-protocol"],
+  "license": "MIT",
+  "description": "MCP server for managing WordPress sites on Kinsta",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "kinsta": {
+      "command": "bun",
+      "args": ["/home/leandro/repos/kinsta-mcp/dist/index.js"],
+      "env": {
+        "KINSTA_API_KEY": "your-kinsta-api-key",
+        "KINSTA_COMPANY_ID": "your-company-id"
+      }
+    }
+  }
+}
