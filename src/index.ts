@@ -10,13 +10,41 @@ import * as os from "node:os";
 import { KinstaClient, KinstaError, isUuid } from "./kinsta-client.js";
 import { requireAuthorization } from "./auth-guard.js";
 
-// ── Config from env ─────────────────────────────────────────
-const API_KEY = process.env.KINSTA_API_KEY;
-if (!API_KEY) {
-  console.error("KINSTA_API_KEY environment variable is required");
+// ── Config: env first, then on-disk credential files ────────
+// The secret lives in one place — a 0600 file under ~/.config/kinsta-mcp —
+// that the server loads itself. This lets every project's .mcp.json be a bare
+// launch block (no env, no secret, no ${VAR} to resolve at spawn time). An
+// explicit env var still wins, so inline configs keep working unchanged.
+const CREDENTIALS_DIR = path.join(os.homedir(), ".config", "kinsta-mcp");
+const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "api-key");
+const COMPANY_ID_FILE = path.join(CREDENTIALS_DIR, "company-id");
+
+function readTrimmed(file: string): string | undefined {
+  try {
+    const v = fs.readFileSync(file, "utf8").trim();
+    return v || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// env KINSTA_API_KEY → env KINSTA_API_KEY_FILE → default credential file.
+function resolveApiKey(): string {
+  const fromEnv = process.env.KINSTA_API_KEY;
+  if (fromEnv) return fromEnv;
+  const file = process.env.KINSTA_API_KEY_FILE || CREDENTIALS_FILE;
+  const fromFile = readTrimmed(file);
+  if (fromFile) return fromFile;
+  console.error(
+    `No Kinsta API key found: set KINSTA_API_KEY, or write the key to ${file} (mode 0600).`,
+  );
   process.exit(1);
 }
-const COMPANY_ID = process.env.KINSTA_COMPANY_ID || undefined;
+
+const API_KEY = resolveApiKey();
+// env KINSTA_COMPANY_ID → default company-id file → undefined (per-call company_id still works).
+const COMPANY_ID =
+  process.env.KINSTA_COMPANY_ID || readTrimmed(COMPANY_ID_FILE);
 const numEnv = (v: string | undefined) => (v ? Number(v) : undefined);
 
 const client = new KinstaClient({
@@ -58,8 +86,7 @@ function findOperationId(data: any): string | undefined {
 // the secret lives on disk (mode 0600), and only its PATH is inlined into the
 // Monitor command — never the key itself. Monitor spawns children with a
 // stripped env, so the child reads the key from this file.
-const CREDENTIALS_DIR = path.join(os.homedir(), ".config", "kinsta-mcp");
-const CREDENTIALS_FILE = path.join(CREDENTIALS_DIR, "api-key");
+// (CREDENTIALS_DIR/CREDENTIALS_FILE are defined with the config resolvers above.)
 
 let credentialsWritten = false;
 function ensureCredentialsFile(): string {
