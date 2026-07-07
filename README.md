@@ -36,8 +36,17 @@ bun run build
 
 ### Configure
 
-Copy `.env.example` to `.env` and fill in `KINSTA_API_KEY` and
-`KINSTA_COMPANY_ID`, or set them in your MCP client config:
+The server resolves the API key from the first source that has it:
+
+1. `KINSTA_API_KEY` environment variable
+2. `KINSTA_API_KEY_FILE` environment variable (path to a file holding the key)
+3. Default credential file `~/.config/kinsta-mcp/api-key` (mode `0600`)
+
+The company ID resolves the same way: `KINSTA_COMPANY_ID` env, then
+`~/.config/kinsta-mcp/company-id`. (Every company-scoped tool also accepts a
+per-call `company_id`.)
+
+**Option A — inline in your MCP client config** (per project):
 
 ```json
 {
@@ -54,15 +63,46 @@ Copy `.env.example` to `.env` and fill in `KINSTA_API_KEY` and
 }
 ```
 
+Or copy `.env.example` to `.env` and fill in the same variables.
+
+**Option B — credential file** (recommended when the same key is shared across
+projects). Write the key once and keep each project's `.mcp.json` a bare launch
+block with no `env`:
+
+```bash
+mkdir -p -m 700 ~/.config/kinsta-mcp
+printf %s 'your-api-key'    > ~/.config/kinsta-mcp/api-key
+printf %s 'your-company-id' > ~/.config/kinsta-mcp/company-id
+chmod 600 ~/.config/kinsta-mcp/api-key ~/.config/kinsta-mcp/company-id
+```
+
+```json
+{
+  "mcpServers": {
+    "kinsta": {
+      "command": "bun",
+      "args": ["/home/leandro/repos/kinsta-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+The server reads the file itself regardless of how it's launched, so no secret
+(and no `${VAR}` reference) ever needs to live in a per-project config.
+
 | Variable | Required | Description |
 |---|---|---|
-| `KINSTA_API_KEY` | ✅ | Kinsta API key (Bearer token). |
-| `KINSTA_COMPANY_ID` | – | Default company for company-scoped tools; every such tool also accepts a per-call `company_id`. |
+| `KINSTA_API_KEY` | ✅¹ | Kinsta API key (Bearer token). |
+| `KINSTA_API_KEY_FILE` | – | Path to a file holding the key; overrides the default `~/.config/kinsta-mcp/api-key`. |
+| `KINSTA_COMPANY_ID` | – | Default company for company-scoped tools; every such tool also accepts a per-call `company_id`. Falls back to `~/.config/kinsta-mcp/company-id`. |
 | `KINSTA_MAX_CONCURRENT_REQUESTS` | – | Default 5. |
 | `KINSTA_CREATION_PER_MINUTE` | – | Default 5 (Kinsta's creation cap). |
 | `KINSTA_MAX_RETRY_DELAY_MS` | – | Default 30000. |
 | `KINSTA_MAX_RETRIES` | – | Default 3. |
 | `KINSTA_TRANSCRIPT_DIR` | – | Override the transcript dir the guard reads (defaults to `~/.claude/projects/<encoded-cwd>/`). |
+
+¹ Required only if no key file is present — the server needs the key from **one**
+of the three sources above.
 
 ## Async operations & the Monitor
 
