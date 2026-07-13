@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "bun dist/index.js",
     "dev": "bun src/index.ts",
+    "cli": "bun src/index.ts",
     "test": "bun test"
   },
   "keywords": ["kinsta", "wordpress", "hosting", "mcp", "model-context-protocol"],

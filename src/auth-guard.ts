@@ -126,6 +126,93 @@ export interface VerifyOptions {
 }
 
 /**
+ * Where the authorization has to come from.
+ *
+ * - `transcript` (default, MCP server): read the Claude Code transcript and
+ *   look for the phrase in a message the human actually typed.
+ * - `tty` (CLI): ask on the controlling terminal and require the human to type
+ *   the phrase there. An agent shelling out to the CLI has no controlling
+ *   terminal, so it gets the same refusal a piped/CI invocation does — the
+ *   "only a human can authorize" property survives the CLI.
+ */
+export type AuthorizationMode = "transcript" | "tty";
+
+let authorizationMode: AuthorizationMode = "transcript";
+
+export function setAuthorizationMode(mode: AuthorizationMode): void {
+  authorizationMode = mode;
+}
+
+/**
+ * Read one line from the controlling terminal, synchronously. Returns null when
+ * there is no terminal (piped stdin, CI, a subprocess spawned by an agent) —
+ * which the caller treats as "not authorized".
+ *
+ * `/dev/tty` is used rather than fd 0 on purpose: fd 0 can be redirected by the
+ * caller, `/dev/tty` cannot — it is always the process's controlling terminal.
+ */
+function promptOnTty(message: string): string | null {
+  let fd: number;
+  try {
+    fd = fs.openSync("/dev/tty", "r+");
+  } catch {
+    return null;
+  }
+  try {
+    fs.writeSync(fd, message);
+    const buf = Buffer.alloc(4096);
+    let out = "";
+    while (!out.includes("\n")) {
+      let n: number;
+      try {
+        n = fs.readSync(fd, buf, 0, buf.length, null);
+      } catch (e: any) {
+        // A non-blocking tty hands back EAGAIN before the user has typed.
+        if (e?.code === "EAGAIN") continue;
+        throw e;
+      }
+      if (n === 0) break;
+      out += buf.toString("utf8", 0, n);
+    }
+    return out.split("\n")[0] ?? "";
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Verify the user authorized `action` on `resourceLabel` by typing the phrase
+ * at the terminal. Fails CLOSED: no terminal, or anything other than the exact
+ * sentence, returns `authorized:false`.
+ */
+export function verifyAuthorizationViaTty(
+  action: string,
+  resourceLabel: string,
+): GuardResult {
+  const requiredPhrase = buildPhrase(action, resourceLabel);
+  const result: GuardResult = { authorized: false, requiredPhrase };
+
+  const answer = promptOnTty(
+    `\n⚠️  DESTRUCTIVE ACTION\n\nThis will ${action} ${resourceLabel}.\n\n` +
+      `To proceed, type this sentence exactly:\n\n    ${requiredPhrase}\n\n> `,
+  );
+
+  if (answer === null) {
+    result.reason =
+      "Not attached to a terminal, so you cannot be asked to authorize this interactively.";
+    return result;
+  }
+  if (normalize(answer).includes(normalize(requiredPhrase))) {
+    result.authorized = true;
+    return result;
+  }
+  result.reason = "What was typed did not match the required authorization sentence.";
+  return result;
+}
+
+/**
  * Verify the user authorized `action` on `resourceLabel`. Fails CLOSED: any
  * missing transcript, unreadable dir, or absent phrase returns
  * `authorized:false`. Only a genuine user-typed match returns true.
@@ -191,15 +278,27 @@ export function requireAuthorization(
   resourceLabel: string,
   opts: VerifyOptions = {},
 ): { content: { type: "text"; text: string }[]; isError: true } | null {
-  const r = verifyAuthorization(action, resourceLabel, opts);
+  const r =
+    authorizationMode === "tty"
+      ? verifyAuthorizationViaTty(action, resourceLabel)
+      : verifyAuthorization(action, resourceLabel, opts);
   if (r.authorized) return null;
+
+  const how =
+    authorizationMode === "tty"
+      ? `To proceed, run this command yourself in an interactive terminal and type the sentence ` +
+        `when prompted:\n\n    ${r.requiredPhrase}\n\n` +
+        `The prompt reads the controlling terminal directly, so it cannot be answered by a ` +
+        `script, a pipe, or an assistant running the CLI for you.`
+      : `To proceed, the USER (not the assistant) must type this exact sentence in chat, ` +
+        `then ask again:\n\n    ${r.requiredPhrase}\n\n` +
+        `The server reads the conversation transcript directly to confirm you typed it — ` +
+        `the assistant cannot authorize this on your behalf.`;
+
   const text =
     `⛔ DESTRUCTIVE ACTION BLOCKED.\n\n` +
     `This will ${action} ${resourceLabel}.\n` +
     `${r.reason ?? ""}\n\n` +
-    `To proceed, the USER (not the assistant) must type this exact sentence in chat, ` +
-    `then ask again:\n\n    ${r.requiredPhrase}\n\n` +
-    `The server reads the conversation transcript directly to confirm you typed it — ` +
-    `the assistant cannot authorize this on your behalf.`;
+    how;
   return { content: [{ type: "text", text }], isError: true };
 }

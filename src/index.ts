@@ -8,7 +8,18 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { KinstaClient, KinstaError, isUuid } from "./kinsta-client.js";
-import { requireAuthorization } from "./auth-guard.js";
+import { requireAuthorization, setAuthorizationMode } from "./auth-guard.js";
+import { runCli, type ToolEntry, type ToolResult } from "./cli.js";
+
+// ── Mode: MCP server on stdio (no args) vs one-shot CLI call ─
+// Both modes read the same tool registry below, so every tool is reachable
+// either way and neither can drift from the other.
+const CLI_ARGS = process.argv.slice(2).filter((a) => a !== "--stdio");
+const CLI_MODE = CLI_ARGS.length > 0 && !process.argv.includes("--stdio");
+// `tools` / `help` describe the surface; they don't call the API, so they must
+// work without credentials configured.
+const CLI_META_ONLY =
+  CLI_MODE && ["tools", "list", "help", "--help", "-h"].includes(CLI_ARGS[0]!);
 
 // ── Config: env first, then on-disk credential files ────────
 // The secret lives in one place — a 0600 file under ~/.config/kinsta-mcp —
@@ -35,6 +46,7 @@ function resolveApiKey(): string {
   const file = process.env.KINSTA_API_KEY_FILE || CREDENTIALS_FILE;
   const fromFile = readTrimmed(file);
   if (fromFile) return fromFile;
+  if (CLI_META_ONLY) return "";
   console.error(
     `No Kinsta API key found: set KINSTA_API_KEY, or write the key to ${file} (mode 0600).`,
   );
@@ -60,11 +72,6 @@ const client = new KinstaClient({
 const MONITOR_SCRIPT = fileURLToPath(
   new URL("../scripts/operation-monitor.ts", import.meta.url),
 );
-
-type ToolResult = {
-  content: { type: "text"; text: string }[];
-  isError?: boolean;
-};
 
 // ── Result helpers ──────────────────────────────────────────
 const ok = (text: string): ToolResult => ({ content: [{ type: "text", text }] });
@@ -187,8 +194,24 @@ async function run(fn: () => Promise<ToolResult>): Promise<ToolResult> {
   }
 }
 
-// ── MCP Server ──────────────────────────────────────────────
-const server = new McpServer({ name: "kinsta", version: "1.0.0" });
+// ── Tool registry ───────────────────────────────────────────
+// Every tool registers itself once, here, and lands in two places: the MCP
+// server (for stdio clients) and TOOLS (for the CLI dispatcher). `server.tool`
+// keeps the SDK's signature, so registration sites read exactly as before.
+const mcp = new McpServer({ name: "kinsta", version: "1.0.0" });
+const TOOLS = new Map<string, ToolEntry>();
+
+const server = {
+  tool<S extends z.ZodRawShape>(
+    name: string,
+    description: string,
+    shape: S,
+    handler: (args: z.infer<z.ZodObject<S>>) => ToolResult | Promise<ToolResult>,
+  ): void {
+    TOOLS.set(name, { name, description, shape, handler: handler as (args: any) => any });
+    mcp.tool(name, description, shape, handler as any);
+  },
+};
 
 const companyParam = {
   company_id: z
@@ -1486,8 +1509,14 @@ server.tool(
 
 // ── Start ───────────────────────────────────────────────────
 async function main() {
+  if (CLI_MODE) {
+    // No transcript to read outside an MCP session: destructive tools ask on
+    // the terminal instead, and refuse when there isn't one.
+    setAuthorizationMode("tty");
+    process.exit(await runCli(CLI_ARGS, TOOLS));
+  }
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await mcp.connect(transport);
 }
 
 main().catch((err) => {
