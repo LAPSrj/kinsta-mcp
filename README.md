@@ -8,9 +8,15 @@ operations — as **89 tools**, plus general tooling like API-key validation.
 
 Built to mirror the sibling `bugherd-mcp` (Bun + TypeScript + the MCP SDK).
 
+It runs two ways off the same tool registry: as an **MCP server** on stdio (no
+arguments), or as a **CLI** (`kinsta-mcp <tool> --param value`). See
+[CLI mode](#cli-mode).
+
 ## Features
 
 - **Full 1:1 API coverage** — one tool per Kinsta endpoint.
+- **Dual mode** — every tool is an MCP tool *and* a CLI subcommand; one
+  registry, so the two can't drift.
 - **Async-aware** — operations that return `202 + operation_id` come back with the
   id, a one-shot `get_operation` hint, and a ready-to-run **Monitor** command.
 - **Hard, self-contained destructive-op guard** — deletes/resets/restores/pushes
@@ -104,6 +110,51 @@ The server reads the file itself regardless of how it's launched, so no secret
 ¹ Required only if no key file is present — the server needs the key from **one**
 of the three sources above.
 
+## CLI mode
+
+With no arguments the binary speaks MCP on stdio, exactly as before. Give it a
+tool name and it runs that one tool and prints the result:
+
+```bash
+bun dist/index.js validate_api_key            # or: bun run cli validate_api_key
+bun dist/index.js list_sites --include_environments
+bun dist/index.js list_activity_logs --limit 5 --category siteActions
+```
+
+| Command | What it does |
+|---|---|
+| `<tool> [--param value]` | Call one tool. Prints its text/JSON to stdout; exits 1 on error. |
+| `tools [filter]` | List the 89 tools (substring filter on name + description). |
+| `help <tool>` | Show that tool's parameters, types, and which are required. |
+| `--stdio` | Force MCP server mode even with other arguments present. |
+
+Parameters are `--name value` or `--name=value`; booleans can be bare flags
+(`--include_environments`, `--no-include_environments`), and repeating a flag
+builds an array. Values are validated against the same zod schemas the MCP tools
+use, so a bad type or an unknown parameter fails before any API call. `tools`
+and `help` work without credentials configured; everything else resolves the API
+key exactly as the server does (env → key file → `~/.config/kinsta-mcp/api-key`).
+
+**Destructive tools in the CLI** are still gated — but there's no conversation
+transcript to read, so the guard asks on the **controlling terminal** instead and
+requires you to type the same verbatim sentence:
+
+```
+⚠️  DESTRUCTIVE ACTION
+
+This will delete the site "My Blog" (id …).
+
+To proceed, type this sentence exactly:
+
+    I authorize Kinsta to delete the site "My Blog" (id …)
+
+>
+```
+
+It reads `/dev/tty`, not stdin, so the prompt can't be satisfied by a pipe, a
+heredoc, a redirect, or an assistant shelling out to the CLI — those have no
+controlling terminal and get a hard refusal. There is no `--force` flag.
+
 ## Async operations & the Monitor
 
 Many Kinsta actions (site/environment create·clone·reset, backup restore, cache
@@ -175,6 +226,11 @@ transcript, no match, or a phrase naming a different resource → the action is
 refused. The required phrase names the exact action and resource, so an old
 "yes go ahead" or an authorization for a different resource won't work.
 
+In **CLI mode** the same barrier holds with a different source of truth: there
+is no transcript, so the phrase is demanded on `/dev/tty` (see
+[CLI mode](#cli-mode)). Either way, authorization can only come from a human —
+never from the caller.
+
 ## Tools
 
 89 tools across: general/auth (`validate_api_key`, `list_regions`,
@@ -215,10 +271,16 @@ refused. The required phrase names the exact action and resource, so an old
 ## Development
 
 ```bash
-bun run dev     # run from source
-bun test        # auth-guard unit tests (incl. spoof-rejection vectors)
-bun run build   # typecheck + emit dist/
+bun run dev                 # run the MCP server from source
+bun run cli list_sites      # run a tool from source
+bun test                    # auth-guard unit tests (incl. spoof-rejection vectors)
+bun run build               # typecheck + emit dist/
 ```
+
+Adding a tool is a single `server.tool(name, description, shape, handler)` call
+in `src/index.ts`: it registers with the MCP server and becomes a CLI subcommand
+in the same breath. `src/cli.ts` holds the dispatcher (argv parsing, coercion of
+string argv into the tool's zod types, help output).
 
 ## API reference
 
