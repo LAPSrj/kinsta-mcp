@@ -8,6 +8,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { KinstaClient, KinstaError, isUuid } from "./kinsta-client.js";
+import { searchSites, compactSite, round2 } from "./site-search.js";
 import { requireAuthorization, setAuthorizationMode } from "./auth-guard.js";
 import { runCli, type ToolEntry, type ToolResult } from "./cli.js";
 
@@ -66,6 +67,7 @@ const client = new KinstaClient({
   creationPerMinute: numEnv(process.env.KINSTA_CREATION_PER_MINUTE),
   maxRetryDelayMs: numEnv(process.env.KINSTA_MAX_RETRY_DELAY_MS),
   maxRetries: numEnv(process.env.KINSTA_MAX_RETRIES),
+  sitesTtlMs: numEnv(process.env.KINSTA_SITES_TTL_MS),
 });
 
 // Absolute path to the operation monitor script (works in dev + dist).
@@ -318,6 +320,91 @@ server.tool(
         ),
       ),
     ),
+);
+
+server.tool(
+  "find_site",
+  "Find a site and its environment ids by name, display name, label, or domain. " +
+    "Typo- and word-order-tolerant: a half-remembered name like \"acme workware\" still " +
+    "finds the site \"ACME - Workspace\". START HERE to get the site_id / env_id that other " +
+    "tools need — list_sites returns the full untrimmed payload and is far too large to read " +
+    "on a big account. Omit `query` to list every site compactly.",
+  {
+    ...companyParam,
+    query: z
+      .string()
+      .optional()
+      .describe(
+        "Site name, display name, label, domain, or a site/environment id. Multi-word and misspelled queries are fine.",
+      ),
+    include_environments: z
+      .boolean()
+      .optional()
+      .describe(
+        "Include environments. Defaults to true for a search (the env ids are the point) " +
+          "and false when listing every site (they'd swamp the output).",
+      ),
+    limit: z.number().optional().describe("Max sites to return (default 10)."),
+  },
+  ({ company_id, query, include_environments, limit }) =>
+    run(async () => {
+      const q = query?.trim() ?? "";
+      const withEnvs = include_environments ?? q !== "";
+      const max = limit ?? 10;
+      const sites = await client.listSites(company_id);
+
+      if (!q) {
+        return ok(
+          pretty({
+            total: sites.length,
+            hint: "Pass `query` to search by name, label or domain and get environment ids back.",
+            sites: sites.map((s) => compactSite(s, withEnvs)),
+          }),
+        );
+      }
+
+      const { matched, suggestions } = searchSites(sites, q);
+
+      if (matched.length) {
+        return ok(
+          pretty({
+            query,
+            matched: matched.length,
+            sites: matched.slice(0, max).map(({ site, score }) => ({
+              score: round2(score),
+              ...compactSite(site, withEnvs),
+            })),
+          }),
+        );
+      }
+
+      if (!suggestions.length) {
+        return ok(
+          pretty({
+            query,
+            matched: 0,
+            note: `Nothing in this company resembles "${query}". Call find_site with no query to see every site.`,
+            sites: [],
+          }),
+        );
+      }
+
+      // Below the match threshold, the top hit is a guess — say so, and make the
+      // agent confirm rather than act on it.
+      return ok(
+        pretty({
+          query,
+          matched: 0,
+          note:
+            `No confident match for "${query}". These are the closest sites, best first — ` +
+            `confirm which one is meant before acting on it.`,
+          did_you_mean: suggestions.slice(0, 5).map(({ site, score }) => ({
+            score: round2(score),
+            ...compactSite(site, withEnvs),
+          })),
+        }),
+      );
+    }),
 );
 
 server.tool(

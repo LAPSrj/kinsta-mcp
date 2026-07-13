@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server for managing WordPress sites on
 [Kinsta](https://kinsta.com). It wraps the **entire** Kinsta REST API
 WordPress-hosting surface (v1.97.0) — sites, environments, domains & DNS,
 backups, plugins/themes, caching/CDN, SFTP/SSH, PHP, analytics, logs, and
-operations — as **89 tools**, plus general tooling like API-key validation.
+operations — as **90 tools**, plus general tooling like API-key validation.
 
 Built to mirror the sibling `bugherd-mcp` (Bun + TypeScript + the MCP SDK).
 
@@ -15,6 +15,10 @@ arguments), or as a **CLI** (`kinsta-mcp <tool> --param value`). See
 ## Features
 
 - **Full 1:1 API coverage** — one tool per Kinsta endpoint.
+- **Fuzzy site lookup** (`find_site`) — the one tool that isn't 1:1 with the API.
+  Search by name, label, or domain, typo- and word-order-tolerant, and get back a
+  compact projection with the `site_id`/`env_id` every other tool wants. See
+  [Finding a site](#finding-a-site).
 - **Dual mode** — every tool is an MCP tool *and* a CLI subcommand; one
   registry, so the two can't drift.
 - **Async-aware** — operations that return `202 + operation_id` come back with the
@@ -105,6 +109,7 @@ The server reads the file itself regardless of how it's launched, so no secret
 | `KINSTA_CREATION_PER_MINUTE` | – | Default 5 (Kinsta's creation cap). |
 | `KINSTA_MAX_RETRY_DELAY_MS` | – | Default 30000. |
 | `KINSTA_MAX_RETRIES` | – | Default 3. |
+| `KINSTA_SITES_TTL_MS` | – | How long the site list stays cached for `find_site` and name→id resolution. Default 60000; `0` disables. |
 | `KINSTA_TRANSCRIPT_DIR` | – | Override the transcript dir the guard reads (defaults to `~/.claude/projects/<encoded-cwd>/`). |
 
 ¹ Required only if no key file is present — the server needs the key from **one**
@@ -117,14 +122,14 @@ tool name and it runs that one tool and prints the result:
 
 ```bash
 bun dist/index.js validate_api_key            # or: bun run cli validate_api_key
-bun dist/index.js list_sites --include_environments
+bun dist/index.js find_site --query "acme workspace"   # site + env ids, compact
 bun dist/index.js list_activity_logs --limit 5 --category siteActions
 ```
 
 | Command | What it does |
 |---|---|
 | `<tool> [--param value]` | Call one tool. Prints its text/JSON to stdout; exits 1 on error. |
-| `tools [filter]` | List the 89 tools (substring filter on name + description). |
+| `tools [filter]` | List the 90 tools (substring filter on name + description). |
 | `help <tool>` | Show that tool's parameters, types, and which are required. |
 | `--stdio` | Force MCP server mode even with other arguments present. |
 
@@ -231,11 +236,105 @@ is no transcript, so the phrase is demanded on `/dev/tty` (see
 [CLI mode](#cli-mode)). Either way, authorization can only come from a human —
 never from the caller.
 
+## Finding a site
+
+Every environment-scoped tool wants an `env_id`, and Kinsta has no search
+endpoint — `GET /sites` returns the whole company or nothing. On a 90-site
+account that payload is ~300KB (~75k tokens), too large for an agent to read, and
+it's the only place `env_id` values appear. `find_site` closes that gap locally.
+It's the one tool that isn't 1:1 with the API.
+
+Taking a site called **ACME - Workspace** (whose Kinsta `name` is
+`acmeworkspace`) as the example throughout:
+
+```bash
+bun dist/index.js find_site --query "workspace"
+```
+
+```json
+{
+  "query": "workspace",
+  "matched": 1,
+  "sites": [
+    {
+      "score": 0.89,
+      "id": "7f3a1c22-…",
+      "name": "acmeworkspace",
+      "display_name": "ACME - Workspace",
+      "status": "live",
+      "labels": ["launched"],
+      "environments": [
+        {
+          "id": "b4e05d91-…",
+          "name": "live",
+          "is_premium": true,
+          "primary_domain": "workspace.example.com",
+          "domains": ["acmeworkspace.kinsta.cloud", "workspace.example.com"],
+          "php_version": "php8.3",
+          "wordpress_version": "6.7.1",
+          "web_root": "/www/acmeworkspace_944/public"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**What it searches:** site names, display names, labels, environment names, and
+domains. A bare site or environment id short-circuits to that site.
+
+**How it matches** (`src/site-search.ts`):
+
+- **Normalized** — both sides collapse to bare alphanumerics, so
+  `ACME - Workspace`, `acmeworkspace`, and `acme workspace` are one string.
+- **OR, not AND** — query tokens are scored independently and averaged, so one
+  wrong word can't sink a right one.
+- **Fuzzy per token** — a token that matches nothing exactly falls back to
+  trigram (Dice) similarity, so a misspelling still earns partial credit.
+- **Weighted by field** — a hit on a site's own name or primary domain is
+  definitive; a hit on an environment name (`Live`, `Staging`) barely narrows
+  anything, since every site has those.
+
+**Near-misses come back, not nothing.** A half-remembered query — right prefix,
+wrong second word — scores below the confidence threshold. Rather than an empty
+result, the tool returns the five closest sites under `did_you_mean`, best first,
+with a note telling the caller to confirm before acting on one:
+
+```bash
+bun dist/index.js find_site --query "acme workware"     # no such site
+```
+
+```json
+{
+  "query": "acme workware",
+  "matched": 0,
+  "note": "No confident match for \"acme workware\". These are the closest sites, best first — confirm which one is meant before acting on it.",
+  "did_you_mean": [
+    { "score": 0.41, "name": "acmeworkspace", "display_name": "ACME - Workspace", "environments": ["…"] }
+  ]
+}
+```
+
+`workware` matches nothing anywhere and contributes 0; `acme` still carries the
+query to the right site, and the environment ids come back with it.
+
+**Output size.** Results are a compact projection — ids, primary domain, PHP and
+WordPress version, web root — roughly 40 tokens per environment against ~450 in
+the raw payload (which also carries SSH connection details, container internals,
+and every wildcard domain). Omit `--query` to list every site compactly: ~17KB
+for 90 sites, versus ~300KB from `list_sites --include_environments`.
+
+**Caching.** The site list is fetched once and held in-process for 60s
+(`KINSTA_SITES_TTL_MS`), shared with the `resolveSite`/`resolveEnvironment`
+name→id resolvers that the destructive guard uses — so a search followed by a
+name-resolved action costs one fetch, not three. Any non-GET request through the
+client drops the cache, so a create, rename, or delete is never served stale.
+
 ## Tools
 
-89 tools across: general/auth (`validate_api_key`, `list_regions`,
+90 tools across: general/auth (`validate_api_key`, `list_regions`,
 `list_company_users`, `list_api_keys`, `list_activity_logs`), **sites**
-(`list_sites`, `get_site`, `create_site`, `create_plain_site`, `clone_site`,
+(`find_site`, `list_sites`, `get_site`, `create_site`, `create_plain_site`, `clone_site`,
 `delete_site`⚠️, `reset_site`⚠️), **environments** (`list_environments`,
 `create_environment`, `create_plain_environment`, `clone_environment`,
 `push_environment`⚠️, `delete_environment`⚠️, `change_webroot`,
@@ -271,16 +370,28 @@ never from the caller.
 ## Development
 
 ```bash
-bun run dev                 # run the MCP server from source
-bun run cli list_sites      # run a tool from source
-bun test                    # auth-guard unit tests (incl. spoof-rejection vectors)
-bun run build               # typecheck + emit dist/
+bun run dev                        # run the MCP server from source
+bun run cli find_site --query wp   # run a tool from source
+bun test                           # unit tests: auth guard + site search
+bun run build                      # typecheck + emit dist/
 ```
 
 Adding a tool is a single `server.tool(name, description, shape, handler)` call
 in `src/index.ts`: it registers with the MCP server and becomes a CLI subcommand
 in the same breath. `src/cli.ts` holds the dispatcher (argv parsing, coercion of
 string argv into the tool's zod types, help output).
+
+| File | What's in it |
+|---|---|
+| `src/index.ts` | Config resolution, the tool registry, every tool definition. |
+| `src/kinsta-client.ts` | HTTP, rate limiting, the site cache, name→id resolution. |
+| `src/site-search.ts` | Fuzzy matching and the compact projection behind `find_site` — pure functions, no I/O. |
+| `src/auth-guard.ts` | The destructive-op barrier (transcript / `/dev/tty`). |
+| `src/cli.ts` | CLI dispatcher. |
+
+`site-search.ts` and `auth-guard.ts` are the two things with real logic, so both
+have unit tests (`bun test`) — including the spoof-rejection vectors for the
+guard and the misspelled-query cases for the search.
 
 ## API reference
 
