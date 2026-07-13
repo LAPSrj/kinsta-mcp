@@ -4,6 +4,14 @@ const DEFAULT_MAX_CONCURRENCY = 5;
 const DEFAULT_CREATION_PER_MINUTE = 5;
 const DEFAULT_MAX_RETRY_DELAY_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 3;
+/**
+ * How long the site list stays warm. Every name→id resolution and every
+ * find_site call reads the same ~300KB /sites payload; without a cache, one
+ * search plus one name-resolved tool call refetches it two or three times in a
+ * single turn. Any mutation through this client drops the cache (see request),
+ * so the window only ever hides changes made outside this process.
+ */
+const DEFAULT_SITES_TTL_MS = 60_000;
 
 export interface KinstaConfig {
   apiKey: string;
@@ -16,6 +24,8 @@ export interface KinstaConfig {
   maxRetryDelayMs?: number;
   /** Max retries on 429 (default 3). */
   maxRetries?: number;
+  /** How long to cache the site list, in ms (default 60000; 0 disables). */
+  sitesTtlMs?: number;
 }
 
 // ── Simple promise-based semaphore ──────────────────────────────
@@ -86,6 +96,8 @@ export class KinstaClient {
   private creationLimiter: CreationLimiter;
   private maxRetryDelayMs: number;
   private maxRetries: number;
+  private sitesTtlMs: number;
+  private sitesCache = new Map<string, { at: number; sites: any[] }>();
 
   constructor(config: KinstaConfig) {
     this.authHeader = `Bearer ${config.apiKey}`;
@@ -96,6 +108,7 @@ export class KinstaClient {
     );
     this.maxRetryDelayMs = config.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.sitesTtlMs = config.sitesTtlMs ?? DEFAULT_SITES_TTL_MS;
   }
 
   /** Company id for a call: explicit override, else the configured default. */
@@ -179,6 +192,9 @@ export class KinstaClient {
               parsed,
             );
           }
+          // Anything that isn't a read may have created, renamed, or destroyed
+          // a site or environment — the cached list is no longer trustworthy.
+          if (method !== "GET") this.invalidateSites();
           if (res.status === 204 || !text) return {} as T;
           return parsed as T;
         }
@@ -219,11 +235,30 @@ export class KinstaClient {
   // builds its required phrase from the resolved display names, so the human
   // authorizes by name and the agent still cannot forge it.
 
-  async listSites(company?: string, includeEnvironments = false): Promise<any[]> {
+  /** Drop the cached site list. Called automatically after any non-GET request. */
+  invalidateSites(): void {
+    this.sitesCache.clear();
+  }
+
+  /**
+   * The company's sites with their environments, cached for sitesTtlMs.
+   *
+   * Environments always come along: they cost one flag on a request we're
+   * making anyway, and they're what callers resolving an env name or searching
+   * for a domain actually need. Every resolver and find_site reads through
+   * here, so a turn that searches and then acts pays for one fetch.
+   */
+  async listSites(company?: string, _includeEnvironments = true, force = false): Promise<any[]> {
+    const key = this.resolveCompany(company);
+    const hit = this.sitesCache.get(key);
+    if (!force && hit && Date.now() - hit.at < this.sitesTtlMs) return hit.sites;
+
     const data = await this.request<any>("GET", "/sites", {
-      query: { company: this.resolveCompany(company), include_environments: includeEnvironments },
+      query: { company: key, include_environments: true },
     });
-    return data?.company?.sites ?? [];
+    const sites = data?.company?.sites ?? [];
+    this.sitesCache.set(key, { at: Date.now(), sites });
+    return sites;
   }
 
   async getSiteEnvironments(siteId: string): Promise<any[]> {
