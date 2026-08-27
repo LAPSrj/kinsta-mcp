@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 
 const _require = createRequire(import.meta.url);
 const { version } = _require("../package.json") as { version: string };
-const USER_AGENT = `WP-MCP/${version}`;
+const USER_AGENT = `KinstaMCP/${version} (github.com/LAPSrj/kinsta-mcp)`;
 
 const BASE_URL = "https://api.kinsta.com/v2";
 
