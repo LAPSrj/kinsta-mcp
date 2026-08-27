@@ -1,3 +1,9 @@
+import { createRequire } from "node:module";
+
+const _require = createRequire(import.meta.url);
+const { version } = _require("../package.json") as { version: string };
+const USER_AGENT = `WP-MCP/${version}`;
+
 const BASE_URL = "https://api.kinsta.com/v2";
 
 const DEFAULT_MAX_CONCURRENCY = 5;
@@ -153,6 +159,7 @@ export class KinstaClient {
     const headers: Record<string, string> = {
       Authorization: this.authHeader,
       Accept: "application/json",
+      "User-Agent": USER_AGENT,
     };
     const init: RequestInit = { method, headers };
 
