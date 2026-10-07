@@ -351,7 +351,7 @@ client drops the cache, so a create, rename, or delete is never served stale.
 (`list_site_domains`, `add_site_domain`, `delete_site_domains`⚠️,
 `set_primary_domain`, `get_domain_verification_records`), **DNS**
 (`list_domains`, `list_dns_records`, `create_dns_record`, `update_dns_record`,
-`delete_dns_record`⚠️), **caching/CDN** (`clear_site_cache`, `clear_cdn_cache`,
+`delete_dns_record`⚠️), **caching/CDN** (`purge_all_caches`, `clear_site_cache`, `clear_cdn_cache`,
 `update_cdn_image_optimization`, `clear_edge_cache`, `update_edge_cache_status`),
 **security** (`get_denied_ips`, `update_denied_ips`), **plugins/themes**
 (`list_site_plugins`, `update_site_plugin`, `bulk_update_site_plugins`,

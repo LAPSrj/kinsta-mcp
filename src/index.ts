@@ -1241,6 +1241,60 @@ server.tool(
     ),
 );
 
+server.tool(
+  "purge_all_caches",
+  "Clear every cache an environment has (site, edge, CDN) in one call. Use this instead of " +
+    "`wp kinsta cache purge --all`, which the Kinsta API rejects as a WP-CLI command. Accepts the " +
+    "environment NAME or id; pass `site` to disambiguate. Skips the edge or CDN cache when the " +
+    "environment doesn't have one (e.g. most staging environments).",
+  {
+    environment: z.string().describe("Environment name or id."),
+    site: z.string().optional().describe("Site name or id, to disambiguate the environment by name."),
+    ...companyParam,
+  },
+  ({ environment, site, company_id }) =>
+    run(async () => {
+      const e = await client.resolveEnvironment(environment, { site, company: company_id });
+      // The site list doesn't reliably include the cache ids; the per-site
+      // environments endpoint does.
+      const full = e.site
+        ? ((await client.getSiteEnvironments(e.site.id)).find((x) => x.id === e.id) ?? e)
+        : e;
+      const label = `the "${e.display_name}" environment of site "${e.site?.display_name ?? site ?? "unknown site"}"`;
+
+      const steps: [string, string | null, () => Promise<any>][] = [
+        ["site cache", e.id, () =>
+          client.request("POST", "/sites/tools/clear-cache", { body: { environment_id: e.id } })],
+        ["edge cache", full.id_edge_cache, () =>
+          client.request("POST", "/sites/edge-caching/clear", { body: { environment_id: e.id } })],
+        ["CDN cache", full.cdn_cache_id, () =>
+          client.request("POST", "/sites/cdn/clear-cache", {
+            body: { environment_id: e.id, cdn_cache_id: full.cdn_cache_id },
+          })],
+      ];
+
+      const lines = [`Cache purge for ${label}:`];
+      let failed = false;
+      for (const [name, id, call] of steps) {
+        if (!id) {
+          lines.push(`- ${name}: skipped, the environment has no ${name}.`);
+          continue;
+        }
+        try {
+          const data = await call();
+          const opId = findOperationId(data);
+          lines.push(`- ${name}: ${opId ? `started (operation_id ${opId})` : "cleared"}.`);
+        } catch (err) {
+          failed = true;
+          const msg = err instanceof KinstaError ? err.message : String(err);
+          lines.push(`- ${name}: FAILED: ${msg}`);
+        }
+      }
+      lines.push("", "Check a started clear with get_operation and its operation_id.");
+      return failed ? fail(lines.join("\n")) : ok(lines.join("\n"));
+    }),
+);
+
 // ════════════════════════════════════════════════════════════
 // Security — denied IPs
 // ════════════════════════════════════════════════════════════
