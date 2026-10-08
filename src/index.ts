@@ -138,7 +138,7 @@ function formatResult(data: any, opNoun = "operation"): ToolResult {
     `  (each stdout line is a JSON status event; it exits when the op succeeds or fails)`,
     ``,
     `Or check once with the get_operation tool (operation_id above).`,
-    `Note: site-creation ops may briefly 404 right after starting — the monitor handles that.`,
+    `Note: ops (site creation, environment push, ...) may 404 for a few minutes after starting. The monitor waits up to 5 minutes for the 404 to clear.`,
   ]
     .filter(Boolean)
     .join("\n");
