@@ -6,7 +6,7 @@
  * so a stalled/failed op can't masquerade as "still running".
  *
  * Usage:
- *   bun scripts/operation-monitor.ts --id <operation_id> [--interval 10] [--timeout 600]
+ *   bun scripts/operation-monitor.ts --id <operation_id> [--interval 10] [--timeout 600] [--not-found-grace 300]
  *
  * Auth: resolves the API key in this order:
  *   1. KINSTA_API_KEY (env) — if present, used directly.
@@ -46,6 +46,7 @@ function arg(flag: string, fallback?: string): string | undefined {
 const operationId = arg("--id");
 const intervalSec = Number(arg("--interval", "10"));
 const timeoutSec = Number(arg("--timeout", "600"));
+const notFoundGraceSec = Number(arg("--not-found-grace", "300"));
 const apiKey = resolveApiKey();
 
 if (!operationId) {
@@ -78,7 +79,7 @@ function classify(message: string, httpStatus: number): "done" | "failed" | "pen
 async function poll(): Promise<void> {
   const deadline = Date.now() + timeoutSec * 1000;
   let lastMessage = "";
-  let notFoundStreak = 0;
+  let notFoundSince: number | undefined;
 
   while (Date.now() < deadline) {
     let res: Response;
@@ -100,18 +101,23 @@ async function poll(): Promise<void> {
       /* keep raw */
     }
 
-    // Site creation can 404 for the first few seconds while the op initializes.
+    // Any op (site creation, environment push, ...) can 404 for a while after
+    // it starts. The window is time-based so it doesn't shrink with --interval.
     if (res.status === 404) {
-      notFoundStreak++;
-      if (notFoundStreak <= 6) {
+      notFoundSince ??= Date.now();
+      if (Date.now() - notFoundSince < notFoundGraceSec * 1000) {
         emit({ event: "initializing", http: 404 });
         await sleep(intervalSec);
         continue;
       }
-      emit({ event: "failed", reason: "operation not found (gave up after initialization window)", http: 404 });
+      emit({
+        event: "failed",
+        reason: `operation not found (still 404 after ${notFoundGraceSec}s)`,
+        http: 404,
+      });
       process.exit(1);
     }
-    notFoundStreak = 0;
+    notFoundSince = undefined;
 
     if (!res.ok) {
       emit({ event: "http_error", http: res.status, body });
