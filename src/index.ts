@@ -146,6 +146,36 @@ function formatResult(data: any, opNoun = "operation"): ToolResult {
 }
 
 /**
+ * Poll an operation until it finishes. Kinsta locks the environment while an
+ * operation runs, so a caller that starts several operations on one
+ * environment must wait for each before starting the next. A 404 means the
+ * operation isn't registered yet; any other error status means it failed.
+ */
+async function waitForOperation(
+  operationId: string,
+  { timeoutMs = 90_000, intervalMs = 2_000 } = {},
+): Promise<{ state: "done" | "failed" | "timeout"; message: string }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const data: any = await client.request("GET", `/operations/${encodeURIComponent(operationId)}`);
+      const message = String(data?.data?.message ?? data?.message ?? "");
+      if (data?.status === 200 || /success|finished|completed/i.test(message)) {
+        return { state: "done", message };
+      }
+    } catch (err) {
+      if (!(err instanceof KinstaError) || err.status !== 404) {
+        const body: any = err instanceof KinstaError ? err.body : undefined;
+        const message = body?.data?.message ?? body?.message ?? (err instanceof Error ? err.message : String(err));
+        return { state: "failed", message: String(message) };
+      }
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return { state: "timeout", message: `still running after ${Math.round(timeoutMs / 1000)}s` };
+}
+
+/**
  * Resolve a site (by name or id) to its id + a friendly guard label. Genuine
  * "not found / ambiguous" errors (404/409) propagate so the user can fix the
  * name; transport/auth failures fall back to the raw identifier so the guard
@@ -1188,7 +1218,12 @@ server.tool(
 server.tool(
   "clear_cdn_cache",
   "Clear an environment's CDN cache. May be async (returns operation_id).",
-  { environment_id: z.string(), cdn_cache_id: z.string().describe("From the environment details.") },
+  {
+    environment_id: z.string(),
+    cdn_cache_id: z
+      .string()
+      .describe("The environment's cdn_cache_id from list_environments (get_site doesn't return it)."),
+  },
   (body) =>
     run(async () =>
       formatResult(await client.request("POST", "/sites/cdn/clear-cache", { body }), "CDN cache clear"),
@@ -1246,7 +1281,8 @@ server.tool(
   "Clear every cache an environment has (site, edge, CDN) in one call. Use this instead of " +
     "`wp kinsta cache purge --all`, which the Kinsta API rejects as a WP-CLI command. Accepts the " +
     "environment NAME or id; pass `site` to disambiguate. Skips the edge or CDN cache when the " +
-    "environment doesn't have one (e.g. most staging environments).",
+    "environment doesn't have one (e.g. most staging environments). Runs the clears one at a time " +
+    "and waits for each to finish, because Kinsta rejects a clear while another is running.",
   {
     environment: z.string().describe("Environment name or id."),
     site: z.string().optional().describe("Site name or id, to disambiguate the environment by name."),
@@ -1273,24 +1309,43 @@ server.tool(
           })],
       ];
 
+      // Kinsta locks the environment while a clear runs, so starting the next
+      // one before the previous finishes fails with "blocked by another
+      // process". Run them one at a time.
       const lines = [`Cache purge for ${label}:`];
       let failed = false;
+      let stuck: string | undefined;
       for (const [name, id, call] of steps) {
         if (!id) {
           lines.push(`- ${name}: skipped, the environment has no ${name}.`);
           continue;
         }
+        if (stuck) {
+          lines.push(`- ${name}: not started, because the ${stuck} clear was still running.`);
+          continue;
+        }
         try {
           const data = await call();
           const opId = findOperationId(data);
-          lines.push(`- ${name}: ${opId ? `started (operation_id ${opId})` : "cleared"}.`);
+          if (!opId) {
+            lines.push(`- ${name}: cleared.`);
+            continue;
+          }
+          const result = await waitForOperation(opId);
+          if (result.state === "done") {
+            lines.push(`- ${name}: cleared (operation_id ${opId}).`);
+          } else {
+            failed = true;
+            if (result.state === "timeout") stuck = name;
+            lines.push(`- ${name}: ${result.state === "timeout" ? "TIMED OUT" : "FAILED"}: ${result.message} (operation_id ${opId}).`);
+          }
         } catch (err) {
           failed = true;
           const msg = err instanceof KinstaError ? err.message : String(err);
           lines.push(`- ${name}: FAILED: ${msg}`);
         }
       }
-      lines.push("", "Check a started clear with get_operation and its operation_id.");
+      if (stuck) lines.push("", "Check the running clear with get_operation and its operation_id, then run this again.");
       return failed ? fail(lines.join("\n")) : ok(lines.join("\n"));
     }),
 );
