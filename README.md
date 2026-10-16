@@ -111,9 +111,66 @@ The server reads the file itself regardless of how it's launched, so no secret
 | `KINSTA_MAX_RETRIES` | – | Default 3. |
 | `KINSTA_SITES_TTL_MS` | – | How long the site list stays cached for `find_site` and name→id resolution. Default 60000; `0` disables. |
 | `KINSTA_TRANSCRIPT_DIR` | – | Override the transcript dir the guard reads (defaults to `~/.claude/projects/<encoded-cwd>/`). |
+| `KINSTA_SITE` | – | This project's site (name or id). See [Project site and environments](#project-site-and-environments). |
+| `KINSTA_ENVIRONMENTS` | – | This project's environments, as `[name=][site/]environment` entries separated by commas. |
 
 ¹ Required only if no key file is present — the server needs the key from **one**
 of the three sources above.
+
+### Project site and environments
+
+A project can tell the server which site and environments it works on, so the
+agent never has to call `find_site` for them. Set them in the `env` block of the
+project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "kinsta": {
+      "command": "bun",
+      "args": ["/home/leandro/repos/kinsta-mcp/dist/index.js"],
+      "env": {
+        "KINSTA_SITE": "acmeworkspace",
+        "KINSTA_ENVIRONMENTS": "live,staging,shop=acme-shop/live"
+      }
+    }
+  }
+}
+```
+
+`KINSTA_ENVIRONMENTS` entries take three forms:
+
+| Entry | Means | Name to pass |
+|---|---|---|
+| `staging` | the `staging` environment of `KINSTA_SITE` | `staging` |
+| `acme-shop/live` | the `live` environment of the site `acme-shop` | `live` |
+| `shop=acme-shop/live` | the same environment | `shop` |
+
+The `name=` form is for a project that uses environments on more than one site,
+where two of them would both be called `live`. Names must be unique
+(case-insensitively), and the server refuses to start if two collide or if a
+bare entry has no `KINSTA_SITE` to belong to.
+
+With either variable set:
+
+- Every environment parameter (`env_id`, `environment_id`, `environment`,
+  `source_env_id`, …) accepts those names, and also any other environment name of
+  `KINSTA_SITE` or an id. Its description lists the names, so the agent sees them
+  in the tool list.
+- A required `site_id` becomes optional. It defaults to the site of the
+  environment passed, else to `KINSTA_SITE`. `push_environment`'s `site` defaults
+  the same way. `delete_site` and `reset_site` still require `site`.
+- The MCP server instructions name the project's site and environments.
+
+There is no default environment: every call names one, so a change meant for
+staging can't reach live by accident. Passing `site` or `site_id` explicitly
+turns the project names off for that call and looks the environment up in the
+given site instead. Names become ids on each call, from the cached site list, so
+a recreated staging environment keeps working without editing `.mcp.json`.
+
+The server reads these variables once at startup, so restart it (in Claude Code,
+`/mcp` → reconnect) after changing them. In CLI mode the same variables apply:
+`KINSTA_SITE=acmeworkspace bun dist/index.js list_backups --env_id staging`.
 
 ## CLI mode
 
@@ -372,7 +429,7 @@ client drops the cache, so a create, rename, or delete is never served stale.
 ```bash
 bun run dev                        # run the MCP server from source
 bun run cli find_site --query wp   # run a tool from source
-bun test                           # unit tests: auth guard + site search
+bun test                           # unit tests: auth guard, site search, project config
 bun run build                      # typecheck + emit dist/
 ```
 
@@ -386,12 +443,14 @@ string argv into the tool's zod types, help output).
 | `src/index.ts` | Config resolution, the tool registry, every tool definition. |
 | `src/kinsta-client.ts` | HTTP, rate limiting, the site cache, name→id resolution. |
 | `src/site-search.ts` | Fuzzy matching and the compact projection behind `find_site` — pure functions, no I/O. |
+| `src/project.ts` | `KINSTA_SITE` / `KINSTA_ENVIRONMENTS`: parsing, the adapted tool parameters, name→id per call. |
 | `src/auth-guard.ts` | The destructive-op barrier (transcript / `/dev/tty`). |
 | `src/cli.ts` | CLI dispatcher. |
 
-`site-search.ts` and `auth-guard.ts` are the two things with real logic, so both
-have unit tests (`bun test`) — including the spoof-rejection vectors for the
-guard and the misspelled-query cases for the search.
+`site-search.ts`, `auth-guard.ts` and `project.ts` are the things with real
+logic, so all three have unit tests (`bun test`) — including the spoof-rejection
+vectors for the guard, the misspelled-query cases for the search, and
+environments on two sites for the project config.
 
 ## API reference
 
