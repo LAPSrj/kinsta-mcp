@@ -11,6 +11,13 @@ import { KinstaClient, KinstaError, isUuid } from "./kinsta-client.js";
 import { searchSites, compactSite, round2 } from "./site-search.js";
 import { requireAuthorization, setAuthorizationMode } from "./auth-guard.js";
 import { runCli, type ToolEntry, type ToolResult } from "./cli.js";
+import {
+  parseProjectConfig,
+  projectInstructions,
+  adaptShape,
+  resolveProjectArgs,
+  type ProjectConfig,
+} from "./project.js";
 
 // ── Mode: MCP server on stdio (no args) vs one-shot CLI call ─
 // Both modes read the same tool registry below, so every tool is reachable
@@ -59,6 +66,17 @@ const API_KEY = resolveApiKey();
 const COMPANY_ID =
   process.env.KINSTA_COMPANY_ID || readTrimmed(COMPANY_ID_FILE);
 const numEnv = (v: string | undefined) => (v ? Number(v) : undefined);
+
+// The project's site and environments, from the `env` block of its .mcp.json
+// (see src/project.ts). A bad entry stops the server: running with half a
+// config would send names to the wrong site.
+let PROJECT: ProjectConfig;
+try {
+  PROJECT = parseProjectConfig(process.env.KINSTA_SITE, process.env.KINSTA_ENVIRONMENTS);
+} catch (e) {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+}
 
 const client = new KinstaClient({
   apiKey: API_KEY,
@@ -230,7 +248,12 @@ async function run(fn: () => Promise<ToolResult>): Promise<ToolResult> {
 // Every tool registers itself once, here, and lands in two places: the MCP
 // server (for stdio clients) and TOOLS (for the CLI dispatcher). `server.tool`
 // keeps the SDK's signature, so registration sites read exactly as before.
-const mcp = new McpServer({ name: "kinsta", version: "1.0.0" });
+// It's also the one place the project config applies: environment names turn
+// into ids and a missing site_id is filled in before any handler runs.
+const mcp = new McpServer(
+  { name: "kinsta", version: "1.0.0" },
+  { instructions: projectInstructions(PROJECT) },
+);
 const TOOLS = new Map<string, ToolEntry>();
 
 const server = {
@@ -240,8 +263,13 @@ const server = {
     shape: S,
     handler: (args: z.infer<z.ZodObject<S>>) => ToolResult | Promise<ToolResult>,
   ): void {
-    TOOLS.set(name, { name, description, shape, handler: handler as (args: any) => any });
-    mcp.tool(name, description, shape, handler as any);
+    const { shape: projectShape, plan } = adaptShape(PROJECT, shape);
+    const wrapped =
+      plan.envKeys.length || plan.siteKeys.length
+        ? (args: any) => run(async () => handler((await resolveProjectArgs(PROJECT, client, plan, args)) as any))
+        : (handler as (args: any) => ToolResult | Promise<ToolResult>);
+    TOOLS.set(name, { name, description, shape: projectShape, handler: wrapped });
+    mcp.tool(name, description, projectShape, wrapped as any);
   },
 };
 
