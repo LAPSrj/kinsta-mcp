@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server for managing WordPress sites on
 [Kinsta](https://kinsta.com). It wraps the **entire** Kinsta REST API
 WordPress-hosting surface (v1.97.0) — sites, environments, domains & DNS,
 backups, plugins/themes, caching/CDN, SFTP/SSH, PHP, analytics, logs, and
-operations — as **90 tools**, plus general tooling like API-key validation.
+operations — as **91 tools**, plus general tooling like API-key validation.
 
 Built to mirror the sibling `bugherd-mcp` (Bun + TypeScript + the MCP SDK).
 
@@ -15,8 +15,9 @@ arguments), or as a **CLI** (`kinsta-mcp <tool> --param value`). See
 ## Features
 
 - **Full 1:1 API coverage** — one tool per Kinsta endpoint.
-- **Fuzzy site lookup** (`find_site`) — the one tool that isn't 1:1 with the API.
-  Search by name, label, or domain, typo- and word-order-tolerant, and get back a
+- **Fuzzy site lookup** (`find_site`) — one of three tools that aren't 1:1 with the
+  API (the others are `purge_all_caches`, which clears the site, edge, and CDN
+  caches in one call, and `operation_monitor_instructions`). Search by name, label, or domain, typo- and word-order-tolerant, and get back a
   compact projection with the `site_id`/`env_id` every other tool wants. See
   [Finding a site](#finding-a-site).
 - **Dual mode** — every tool is an MCP tool *and* a CLI subcommand; one
@@ -186,7 +187,7 @@ bun dist/index.js list_activity_logs --limit 5 --category siteActions
 | Command | What it does |
 |---|---|
 | `<tool> [--param value]` | Call one tool. Prints its text/JSON to stdout; exits 1 on error. |
-| `tools [filter]` | List the 90 tools (substring filter on name + description). |
+| `tools [filter]` | List the 91 tools (substring filter on name + description). |
 | `help <tool>` | Show that tool's parameters, types, and which are required. |
 | `--stdio` | Force MCP server mode even with other arguments present. |
 
@@ -299,7 +300,7 @@ Every environment-scoped tool wants an `env_id`, and Kinsta has no search
 endpoint — `GET /sites` returns the whole company or nothing. On a 90-site
 account that payload is ~300KB (~75k tokens), too large for an agent to read, and
 it's the only place `env_id` values appear. `find_site` closes that gap locally.
-It's the one tool that isn't 1:1 with the API.
+It isn't 1:1 with the API.
 
 Taking a site called **ACME - Workspace** (whose Kinsta `name` is
 `acmeworkspace`) as the example throughout:
@@ -389,7 +390,7 @@ client drops the cache, so a create, rename, or delete is never served stale.
 
 ## Tools
 
-90 tools across: general/auth (`validate_api_key`, `list_regions`,
+91 tools across: general/auth (`validate_api_key`, `list_regions`,
 `list_company_users`, `list_api_keys`, `list_activity_logs`), **sites**
 (`find_site`, `list_sites`, `get_site`, `create_site`, `create_plain_site`, `clone_site`,
 `delete_site`⚠️, `reset_site`⚠️), **environments** (`list_environments`,
