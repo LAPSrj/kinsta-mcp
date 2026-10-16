@@ -1,0 +1,34 @@
+# kinsta-mcp
+
+> MCP server and CLI for managing WordPress sites on Kinsta. It wraps the Kinsta REST API v2 WordPress-hosting endpoints (sites, environments, domains and DNS, backups, plugins and themes, caching and CDN, SFTP/SSH, PHP, analytics, logs, operations) as 91 tools. All but three map one-to-one to an endpoint. The three helpers are `find_site` (fuzzy site lookup), `purge_all_caches` (clears the site, edge, and CDN caches in one call), and `operation_monitor_instructions` (builds a command that watches an async operation). Built with Bun, TypeScript, the MCP SDK, and zod.
+
+Key facts for an agent using or changing this project:
+
+- With no arguments, `bun dist/index.js` runs the MCP server on stdio. With a tool name (`bun dist/index.js find_site --query "acme"`) it runs that one tool as a CLI. Both modes share one tool registry in `src/index.ts`.
+- The API key resolves from `KINSTA_API_KEY`, then `KINSTA_API_KEY_FILE`, then `~/.config/kinsta-mcp/api-key`. The company ID resolves from `KINSTA_COMPANY_ID`, then `~/.config/kinsta-mcp/company-id`, and every company-scoped tool also accepts a per-call `company_id`.
+- Most environment-scoped tools need an `env_id`, and Kinsta has no search endpoint. Call `find_site` (by name, label, or domain, typo-tolerant) to get `site_id` and `env_id` values instead of `list_sites`, whose full payload is about 300KB on a 90-site account.
+- A project can set `KINSTA_SITE` and `KINSTA_ENVIRONMENTS` (entries of the form `[name=][site/]environment`) in its `.mcp.json`. Environment parameters then accept those names, and `site_id` becomes optional. There is no default environment, so every call names one.
+- Many actions are asynchronous and return an `operation_id`. Check one with `get_operation`, or get a ready command for Claude Code's Monitor tool from `operation_monitor_instructions` (it runs `scripts/operation-monitor.ts`, which exits on success or failure).
+- Destructive tools (`delete_site`, `reset_site`, `delete_environment`, `push_environment`, `restore_backup`, `delete_backup`, `delete_site_domains`, `delete_dns_record`, `delete_sftp_user`, `update_redirect_rules` with DELETE or DELETE_ALL, and destructive `run_wp_cli` commands) are refused until the human user types an exact sentence such as `I authorize Kinsta to delete the site "My Blog" (id …)`. The server checks for it in the user's own messages in the Claude Code transcript, or on `/dev/tty` in CLI mode. An assistant can't type, pass, or forge it, so ask the user to type the sentence the refusal names.
+- Rate limits are 120 requests/min per company and 5/min for resource creation. The client honors `Retry-After` on 429 responses.
+
+## Docs
+
+- [README](https://github.com/LAPSrj/kinsta-mcp/blob/master/README.md): setup, configuration variables, CLI mode, async operations, the destructive-operation guard, `find_site` matching, and the full tool list
+- [.env.example](https://github.com/LAPSrj/kinsta-mcp/blob/master/.env.example): every environment variable with its default
+- [.mcp.json.example](https://github.com/LAPSrj/kinsta-mcp/blob/master/.mcp.json.example): MCP client launch block
+
+## Source
+
+- [src/index.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/index.ts): config resolution and every tool definition (add a tool with one `server.tool(name, description, shape, handler)` call)
+- [src/kinsta-client.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/kinsta-client.ts): HTTP client, rate limiting, the site-list cache, and name-to-id resolution
+- [src/site-search.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/site-search.ts): fuzzy matching and the compact result format behind `find_site`
+- [src/project.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/project.ts): parsing of `KINSTA_SITE` and `KINSTA_ENVIRONMENTS` and the project-aware tool parameters
+- [src/auth-guard.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/auth-guard.ts): the destructive-operation check (transcript or `/dev/tty`)
+- [src/cli.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/cli.ts): CLI argument parsing, type coercion, and help output
+- [scripts/operation-monitor.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/scripts/operation-monitor.ts): polls an async operation until it finishes
+
+## Optional
+
+- [Kinsta API docs](https://api-docs.kinsta.com): the upstream REST API this server wraps
+- [Tests](https://github.com/LAPSrj/kinsta-mcp/tree/master/src): `auth-guard.test.ts`, `site-search.test.ts`, and `project.test.ts`, run with `bun test`

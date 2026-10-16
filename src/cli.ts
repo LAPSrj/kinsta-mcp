@@ -1,7 +1,7 @@
 /**
  * CLI mode.
  *
- * The same 89 tools the MCP server exposes, callable from a shell:
+ * The same tools the MCP server exposes, callable from a shell:
  *
  *   kinsta-mcp list_sites
  *   kinsta-mcp get_site --site_id abc-123
