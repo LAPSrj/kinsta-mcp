@@ -431,7 +431,7 @@ client drops the cache, so a create, rename, or delete is never served stale.
 bun run dev                        # run the MCP server from source
 bun run cli find_site --query wp   # run a tool from source
 bun test                           # unit tests: auth guard, site search, project config
-bun run build                      # typecheck + emit dist/
+bun run build                      # typecheck + bundle to dist/index.js
 ```
 
 Adding a tool is a single `server.tool(name, description, shape, handler)` call
