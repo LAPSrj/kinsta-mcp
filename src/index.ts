@@ -1657,7 +1657,9 @@ for (const a of analyticsEndpoints) {
     from: z.string().optional().describe("ISO start (use with `to` for a custom range)."),
     to: z.string().optional().describe("ISO end."),
   };
-  if (a.timeZone) shape.time_zone = z.string().describe("IANA time zone, e.g. America/New_York.");
+  if (a.timeZone) shape.time_zone = z
+      .string()
+      .describe("UTC offset as HH:MM, e.g. '-05:00' or '02:00'. No leading '+', and not an IANA name.");
   server.tool(a.name, `Get ${a.desc} analytics for an environment.`, shape, (params: any) =>
     run(async () => {
       const { env_id, company_id, ...query } = params;
