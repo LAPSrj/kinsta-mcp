@@ -1052,15 +1052,20 @@ const redirectRuleSchema = z.object({
 
 server.tool(
   "update_redirect_rules",
-  "Create, update, or delete redirect rules. action_type DELETE/DELETE_ALL is DESTRUCTIVE and requires a verbatim user authorization typed in chat.",
+  "Create, update, or delete redirect rules. NEW: pass the rule in new_value. UPDATE: pass the current rule in rules_to_update and its replacement in new_value. action_type DELETE/DELETE_ALL is DESTRUCTIVE and requires a verbatim user authorization typed in chat.",
   {
     env_id: z.string(),
     action_type: z.enum(["NEW", "UPDATE", "DELETE", "DELETE_ALL"]),
     rules_to_update: z.array(redirectRuleSchema).optional(),
     new_value: redirectRuleSchema.optional(),
   },
-  ({ env_id, ...body }) =>
+  ({ env_id, ...args }) =>
     run(async () => {
+      // Contrary to Kinsta's OpenAPI spec, NEW ignores new_value and adds the rule sent in rules_to_update.
+      const body =
+        args.action_type === "NEW" && args.new_value && !args.rules_to_update
+          ? { action_type: args.action_type, rules_to_update: [args.new_value] }
+          : args;
       if (body.action_type === "DELETE" || body.action_type === "DELETE_ALL") {
         const blocked = requireAuthorization(
           `${body.action_type === "DELETE_ALL" ? "delete all redirect rules in" : "delete redirect rules in"}`,
