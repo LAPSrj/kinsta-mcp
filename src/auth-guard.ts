@@ -9,13 +9,14 @@
  * message.
  *
  * Why this is forge-proof: Claude Code appends every turn to
- * `~/.claude/projects/<encoded-cwd>/<session>.jsonl`. A real human message is a
- * record with `type:"user"` whose `message.content[]` holds `{type:"text"}`
- * blocks. The agent's own words are `type:"assistant"` records (excluded), and
- * anything the agent can cause a tool to emit is a `{type:"tool_result"}` block
- * (dropped). The agent has no way to append a `type:"user"` text record, route
- * the phrase through a tool result, or pass it as a trusted parameter. So a
- * match in the user-typed projection can only come from the human typing it.
+ * `~/.claude/projects/<encoded-cwd>/<session>.jsonl`. `type:"user"` records are
+ * not all human: task notifications (background command and Monitor output),
+ * messages from other Claude sessions, plugin/hook injections, slash-command and
+ * `!` shell output, and compaction summaries are written as `type:"user"` too.
+ * Claude Code tags those with `origin.kind`, `isMeta`, or `promptSource`, so the
+ * projection below accepts only records tagged as human input, plus the
+ * `queued_command` attachment used for a message sent while the agent is
+ * working. Tool output lands in `{type:"tool_result"}` blocks (dropped).
  *
  * This is a clean-room port of the projection used by pantheon's
  * `validate_user_quote` (extractUserTypedText / stringifyUserTextBlocksOnly).
@@ -70,17 +71,43 @@ function normalize(s: string): string {
     .trim();
 }
 
-/** STRICT user-typed-text projection — only `content[].type === "text"` blocks
- * of `type:"user"` records. Tool_use / tool_result / image / any other block
- * type is dropped so the agent can't spoof a phrase via a tool result. Returns
+function originKind(r: Record<string, unknown>): unknown {
+  return (r.origin as Record<string, unknown> | undefined)?.kind;
+}
+
+/** STRICT user-typed-text projection. Accepts only messages Claude Code marks
+ * as coming from the human: a `type:"user"` prompt (origin `human`, or no
+ * origin with promptSource `typed`/`queued`/`sdk`), or a `queued_command` attachment
+ * with commandMode `prompt` (a message sent while the agent was working).
+ * Task notifications, peer-session messages, isMeta injections, slash-command
+ * and `!` shell output, and tool_result/image blocks are all dropped. Returns
  * null when the record is not a genuine user-typed message. */
 export function extractUserTypedText(raw: unknown): string | null {
   if (!raw || typeof raw !== "object") return null;
   const entry = raw as Record<string, unknown>;
-  if (entry.type !== "user") return null;
+  if (entry.type === "attachment") {
+    const a = entry.attachment as Record<string, unknown> | undefined;
+    if (!a || a.type !== "queued_command" || a.commandMode !== "prompt") return null;
+    if (a.isMeta) return null;
+    const kind = originKind(a);
+    if (kind !== undefined && kind !== "human") return null;
+    return textOf(a.prompt);
+  }
+  if (entry.type !== "user" || entry.isMeta) return null;
+  const kind = originKind(entry);
+  const fromHuman =
+    kind === "human" ||
+    (kind === undefined &&
+      (entry.promptSource === "typed" ||
+        entry.promptSource === "queued" ||
+        entry.promptSource === "sdk"));
+  if (!fromHuman) return null;
   const msg = entry.message as Record<string, unknown> | undefined;
   if (!msg) return null;
-  const content = msg.content;
+  return textOf(msg.content);
+}
+
+function textOf(content: unknown): string | null {
   if (typeof content === "string") {
     return content.length ? content : null;
   }
