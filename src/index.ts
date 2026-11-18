@@ -793,6 +793,25 @@ server.tool(
     ),
 );
 
+// Kinsta's OpenAPI spec pattern for wp_command; anything else gets a bare 400 "Bad request format".
+const WP_COMMAND_PATTERN = /^wp\s+[a-zA-Z0-9_\-./:=@'\s]+$/;
+
+function wpCommandProblem(wp_command: string): string | undefined {
+  if (WP_COMMAND_PATTERN.test(wp_command)) return undefined;
+  if (!/^wp\s/.test(wp_command)) {
+    return "Kinsta's API requires the command to start with `wp ` (for example `wp plugin list`).";
+  }
+  const rejected = [...new Set(wp_command.replace(/[a-zA-Z0-9_\-./:=@'\s]/g, ""))];
+  if (rejected.length === 0) return "Kinsta's API requires a command after `wp`.";
+  return (
+    `Kinsta's API rejects these characters in WP-CLI commands: ${rejected.map((c) => JSON.stringify(c)).join(" ")}. ` +
+    "It allows only letters, digits, whitespace and ' _ - . / : = @, so SQL with a column list, COUNT(*) or IN (...), " +
+    "and options like --fields=ID,post_title, can't go through this tool. Run the command over SSH instead " +
+    "(get_sftp_ssh_config gives the host, port and user). For SQL, write the query to a file on the server and run " +
+    "`wp db query < query.sql`, so the shell doesn't have to quote it."
+  );
+}
+
 server.tool(
   "run_wp_cli",
   "Run a WP-CLI command on an environment (accepts the environment NAME or id; pass `site` to disambiguate). Powerful: commands like `db reset`, `db drop`, `site empty`, or queries containing DROP/DELETE/TRUNCATE are DESTRUCTIVE and require a verbatim user authorization typed in chat.",
@@ -804,8 +823,11 @@ server.tool(
         "The full wp-cli command INCLUDING the leading `wp`, e.g. 'wp plugin list'. " +
           "Kinsta requires the `wp ` prefix and rejects commands without it. Allowed " +
           "characters are restricted to `^wp\\s+[a-zA-Z0-9_\\-./:=@'\\s]+$` — letters, " +
-          "digits, space, and ' _ - . / : = @ (so `@` in emails is fine, but `!`, `?`, " +
-          "`#`, `$`, etc. are rejected; keep generated passwords to [A-Za-z0-9._:=-]). " +
+          "digits, space, and ' _ - . / : = @ (so `@` in emails is fine, but commas, " +
+          "parentheses, `*`, `;`, double quotes, `!`, `?`, `#`, `$`, etc. are rejected; keep " +
+          "generated passwords to [A-Za-z0-9._:=-]). Commands that need those characters, " +
+          "such as SQL with a column list or `--fields=a,b`, must run over SSH, with any SQL " +
+          "passed through a file (`wp db query < query.sql`). " +
           "Runs asynchronously: returns an operation_id, and the command's stdout comes " +
           "back in the completion event's `body.data.result`.",
       ),
@@ -814,6 +836,8 @@ server.tool(
   },
   ({ environment, wp_command, site, company_id }) =>
     run(async () => {
+      const problem = wpCommandProblem(wp_command);
+      if (problem) return fail(problem);
       const destructive = /\b(db\s+(reset|drop)|site\s+empty|db\s+query[\s\S]*\b(drop|delete|truncate)\b|(plugin|theme)\s+delete)\b/i.test(
         wp_command,
       );
