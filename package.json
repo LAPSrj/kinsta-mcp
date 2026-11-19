@@ -14,7 +14,7 @@
     "test": "bun test"
   },
   "keywords": ["kinsta", "wordpress", "hosting", "mcp", "model-context-protocol"],
-  "license": "MIT",
+  "license": "PolyForm-Strict-1.0.0",
   "description": "MCP server for managing WordPress sites on Kinsta",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

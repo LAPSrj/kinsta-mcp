@@ -458,3 +458,7 @@ environments on two sites for the project config.
 Wraps the [Kinsta API](https://api-docs.kinsta.com) at
 `https://api.kinsta.com/v2`. Auth is HTTP Bearer. Rate limits: 120 req/min per
 company, 5/min for resource creation, 1000/min per IP.
+
+## License
+
+[PolyForm Strict License 1.0.0](LICENSE.md)
