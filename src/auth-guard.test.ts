@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   verifyAuthorization,
+  requireAuthorization,
   buildPhrase,
   encodeCwdForClaudeProject,
   extractUserTypedText,
@@ -63,6 +64,22 @@ test("tolerates case / whitespace / quote differences", () => {
   const dir = mkTranscriptDir([userText(`  i AUTHORIZE   kinsta to "delete the site" staging-acme `)]);
   const r = verifyAuthorization(ACTION, RESOURCE, { transcriptDirOverride: dir });
   expect(r.authorized).toBe(true);
+});
+
+test("tolerates curly quotes around a quoted resource name", () => {
+  const resource = 'the site "My Blog" (id 1)';
+  const dir = mkTranscriptDir([userText("I authorize Kinsta to delete the site “My Blog” (id 1)")]);
+  const r = verifyAuthorization("delete", resource, { transcriptDirOverride: dir });
+  expect(r.authorized).toBe(true);
+});
+
+test("block message tells the agent to quote the sentence to the user verbatim", () => {
+  const dir = mkTranscriptDir([userText("go ahead")]);
+  const blocked = requireAuthorization(ACTION, RESOURCE, { transcriptDirOverride: dir });
+  const text = blocked!.content[0].text;
+  expect(text).toContain("In your reply to the user, quote this sentence exactly");
+  expect(text).toContain(`\`\`\`\n${PHRASE}\n\`\`\``);
+  expect(text).toContain("not found in any message the user typed");
 });
 
 test("REJECTS when the phrase appears only in an assistant record", () => {

@@ -66,7 +66,7 @@ export function buildPhrase(action: string, resourceLabel: string): string {
 function normalize(s: string): string {
   return s
     .toLowerCase()
-    .replace(/["'`]/g, "")
+    .replace(/["'`‘’“”]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -292,7 +292,7 @@ export function verifyAuthorization(
   }
 
   result.reason =
-    "The required authorization sentence was not found in any message you actually typed.";
+    "The required authorization sentence was not found in any message the user typed.";
   return result;
 }
 
@@ -317,10 +317,13 @@ export function requireAuthorization(
         `when prompted:\n\n    ${r.requiredPhrase}\n\n` +
         `The prompt reads the controlling terminal directly, so it cannot be answered by a ` +
         `script, a pipe, or an assistant running the CLI for you.`
-      : `To proceed, the USER (not the assistant) must type this exact sentence in chat, ` +
-        `then ask again:\n\n    ${r.requiredPhrase}\n\n` +
-        `The server reads the conversation transcript directly to confirm you typed it — ` +
-        `the assistant cannot authorize this on your behalf.`;
+      : `Only the user can authorize this. In your reply to the user, quote this sentence ` +
+        `exactly, in a code block on its own, and ask them to type it in chat if they want ` +
+        `to proceed:\n\n\`\`\`\n${r.requiredPhrase}\n\`\`\`\n\n` +
+        `Don't paraphrase, shorten, or translate it, because the server accepts only this ` +
+        `sentence and looks for it only in messages the user typed (it reads the conversation ` +
+        `transcript), so your own text never counts. After the user sends it, call this tool ` +
+        `again with the same arguments.`;
 
   const text =
     `⛔ DESTRUCTIVE ACTION BLOCKED.\n\n` +
