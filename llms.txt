@@ -1,4 +1,4 @@
-# kinsta-mcp
+# kmcp
 
 > MCP server and CLI for managing WordPress sites on Kinsta. It wraps the Kinsta REST API v2 WordPress-hosting endpoints (sites, environments, domains and DNS, backups, plugins and themes, caching and CDN, SFTP/SSH, PHP, analytics, logs, operations) as 91 tools. All but three map one-to-one to an endpoint. The three helpers are `find_site` (fuzzy site lookup), `purge_all_caches` (clears the site, edge, and CDN caches in one call), and `operation_monitor_instructions` (builds a command that watches an async operation). Built with Bun, TypeScript, the MCP SDK, and zod.
 
@@ -14,21 +14,21 @@ Key facts for an agent using or changing this project:
 
 ## Docs
 
-- [README](https://github.com/LAPSrj/kinsta-mcp/blob/master/README.md): setup, configuration variables, CLI mode, async operations, the destructive-operation guard, `find_site` matching, and the full tool list
-- [.env.example](https://github.com/LAPSrj/kinsta-mcp/blob/master/.env.example): every environment variable with its default
-- [.mcp.json.example](https://github.com/LAPSrj/kinsta-mcp/blob/master/.mcp.json.example): MCP client launch block
+- [README](https://github.com/LAPSrj/kmcp/blob/master/README.md): setup, configuration variables, CLI mode, async operations, the destructive-operation guard, `find_site` matching, and the full tool list
+- [.env.example](https://github.com/LAPSrj/kmcp/blob/master/.env.example): every environment variable with its default
+- [.mcp.json.example](https://github.com/LAPSrj/kmcp/blob/master/.mcp.json.example): MCP client launch block
 
 ## Source
 
-- [src/index.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/index.ts): config resolution and every tool definition (add a tool with one `server.tool(name, description, shape, handler)` call)
-- [src/kinsta-client.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/kinsta-client.ts): HTTP client, rate limiting, the site-list cache, and name-to-id resolution
-- [src/site-search.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/site-search.ts): fuzzy matching and the compact result format behind `find_site`
-- [src/project.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/project.ts): parsing of `KINSTA_SITE` and `KINSTA_ENVIRONMENTS` and the project-aware tool parameters
-- [src/auth-guard.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/auth-guard.ts): the destructive-operation check (transcript or `/dev/tty`)
-- [src/cli.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/src/cli.ts): CLI argument parsing, type coercion, and help output
-- [scripts/operation-monitor.ts](https://github.com/LAPSrj/kinsta-mcp/blob/master/scripts/operation-monitor.ts): polls an async operation until it finishes
+- [src/index.ts](https://github.com/LAPSrj/kmcp/blob/master/src/index.ts): config resolution and every tool definition (add a tool with one `server.tool(name, description, shape, handler)` call)
+- [src/kinsta-client.ts](https://github.com/LAPSrj/kmcp/blob/master/src/kinsta-client.ts): HTTP client, rate limiting, the site-list cache, and name-to-id resolution
+- [src/site-search.ts](https://github.com/LAPSrj/kmcp/blob/master/src/site-search.ts): fuzzy matching and the compact result format behind `find_site`
+- [src/project.ts](https://github.com/LAPSrj/kmcp/blob/master/src/project.ts): parsing of `KINSTA_SITE` and `KINSTA_ENVIRONMENTS` and the project-aware tool parameters
+- [src/auth-guard.ts](https://github.com/LAPSrj/kmcp/blob/master/src/auth-guard.ts): the destructive-operation check (transcript or `/dev/tty`)
+- [src/cli.ts](https://github.com/LAPSrj/kmcp/blob/master/src/cli.ts): CLI argument parsing, type coercion, and help output
+- [scripts/operation-monitor.ts](https://github.com/LAPSrj/kmcp/blob/master/scripts/operation-monitor.ts): polls an async operation until it finishes
 
 ## Optional
 
 - [Kinsta API docs](https://api-docs.kinsta.com): the upstream REST API this server wraps
-- [Tests](https://github.com/LAPSrj/kinsta-mcp/tree/master/src): `auth-guard.test.ts`, `site-search.test.ts`, and `project.test.ts`, run with `bun test`
+- [Tests](https://github.com/LAPSrj/kmcp/tree/master/src): `auth-guard.test.ts`, `site-search.test.ts`, and `project.test.ts`, run with `bun test`
